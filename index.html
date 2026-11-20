@@ -579,12 +579,10 @@
     submitCurrentInput();
   });
 
-  // iPad Safari向けカメラ制御
+  // iPad Safari向けカメラ制御（読み取り後に自動で閉じる）
   let codeReader = null;
   let isCameraRunning = false;
   let useBackCamera = true;
-  let lastScannedCode = "";
-  let lastScannedTime = 0;
 
   async function startCamera() {
     if (typeof ZXing === "undefined") {
@@ -612,20 +610,12 @@
       isCameraRunning = true;
 
       await codeReader.decodeFromConstraints(constraints, 'video', (result, err) => {
-        if (result) {
+        if (result && isCameraRunning) {
           const text = result.getText();
-          const now = Date.now();
-          if (text !== lastScannedCode || (now - lastScannedTime) > 2500) {
-            lastScannedCode = text;
-            lastScannedTime = now;
-            input.value = text;
-            updateCounter();
-            evaluateBarcode(text);
-            setTimeout(() => {
-              input.value = "";
-              updateCounter();
-            }, 1000);
-          }
+          stopCamera();
+          evaluateBarcode(text);
+          input.value = "";
+          updateCounter();
         }
       });
     } catch (e) {
@@ -635,6 +625,7 @@
   }
 
   function stopCamera() {
+    isCameraRunning = false;
     if (codeReader) {
       codeReader.reset();
     }
@@ -642,7 +633,6 @@
     switchBtn.style.display = "none";
     cameraBtn.textContent = "📷 カメラを起動";
     cameraBtn.classList.remove("active");
-    isCameraRunning = false;
   }
 
   cameraBtn.addEventListener("click", () => {

@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>バーコードチェック体験レジ</title>
+<script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
+<style>
+  * {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    font-family: -apple-system, "Hiragino Kaku Gothic ProN", sans-serif;
+    text-align: center;
+    background-color: #f4f7f6;
+    margin: 0;
+    padding: 16px;
+  }
+  .container {
+    max-width: 760px;
+    margin: 0 auto;
+    background: white;
+    padding: 24px;
+    border-radius: 20px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+  }
+  h1 {
+    font-size: 26px;
+    color: #333;
+    margin: 0 0 8px 0;
+  }
+  p.guide {
+    font-size: 15px;
+    color: #666;
+    margin: 0 0 18px 0;
+  }
+  .controls {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .btn {
+    font-size: 17px;
+    font-weight: bold;
+    padding: 13px 18px;
+    border: none;
+    border-radius: 12px;
+    color: white;
+    cursor: pointer;
+    min-width: 165px;
+    transition: opacity 0.15s, transform 0.05s;
+  }
+  .btn:active {
+    transform: scale(0.97);
+  }
+  #camera-toggle-btn {
+    background-color: #17a2b8;
+  }
+  #camera-toggle-btn.active {
+    background-color: #6c757d;
+  }
+  #switch-camera-btn {
+    background-color: #007bff;
+    display: none;
+  }
+  #keypad-toggle-btn {
+    background-color: #fd7e14;
+  }
+  #keypad-toggle-btn.active {
+    background-color: #6c757d;
+  }
+
+  /* カメラエリア */
+  #camera-box {
+    display: none;
+    margin: 0 auto 18px;
+    max-width: 440px;
+    position: relative;
+  }
+  .video-wrapper {
+    position: relative;
+    width: 100%;
+    border-radius: 14px;
+    overflow: hidden;
+    border: 3px solid #17a2b8;
+    background: #000;
+  }
+  #video {
+    width: 100%;
+    display: block;
+  }
+  .scan-guide-line {
+    position: absolute;
+    top: 50%;
+    left: 10%;
+    right: 10%;
+    height: 3px;
+    background-color: rgba(255, 59, 48, 0.8);
+    box-shadow: 0 0 6px rgba(255, 59, 48, 0.9);
+    pointer-events: none;
+  }
+  .camera-hint {
+    font-size: 14px;
+    color: #555;
+    margin-top: 8px;
+  }
+
+  /* 入力わく */
+  .manual-input-area {
+    margin-top: 8px;
+  }
+  #barcode-input {
+    font-family: "Menlo", "Courier New", monospace;
+    font-size: 26px;
+    font-weight: bold;
+    text-align: center;
+    padding: 10px 14px;
+    width: 100%;
+    max-width: 380px;
+    border: 2px solid #ced4da;
+    border-radius: 10px;
+    letter-spacing: 3px;
+    outline: none;
+    background-color: #fff;
+  }
+  #barcode-input:focus {
+    border-color: #007bff;
+  }
+  #digit-counter {
+    font-size: 14px;
+    font-weight: bold;
+    color: #555;
+    margin-top: 6px;
+    min-height: 20px;
+  }
+
+  /* 仮想テンキーエリア */
+  #keypad-box {
+    display: none;
+    margin: 14px auto 0;
+    max-width: 360px;
+    background-color: #f1f3f5;
+    padding: 14px;
+    border-radius: 16px;
+    border: 2px solid #dee2e6;
+  }
+  .keypad-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+  .key-btn {
+    font-size: 26px;
+    font-weight: bold;
+    padding: 14px 0;
+    border: none;
+    border-radius: 12px;
+    background-color: #ffffff;
+    color: #212529;
+    box-shadow: 0 3px 0 #ced4da;
+    cursor: pointer;
+    user-select: none;
+  }
+  .key-btn:active {
+    transform: translateY(2px);
+    box-shadow: 0 1px 0 #ced4da;
+    background-color: #e9ecef;
+  }
+  .key-btn.key-clear {
+    background-color: #ffe3e3;
+    color: #c92a2a;
+    font-size: 18px;
+    box-shadow: 0 3px 0 #ffa8a8;
+  }
+  .key-btn.key-back {
+    background-color: #fff3bf;
+    color: #e67700;
+    font-size: 20px;
+    box-shadow: 0 3px 0 #ffe066;
+  }
+  .key-submit {
+    grid-column: span 3;
+    margin-top: 4px;
+    padding: 15px 0;
+    font-size: 22px;
+    font-weight: bold;
+    border: none;
+    border-radius: 12px;
+    background-color: #28a745;
+    color: white;
+    box-shadow: 0 3px 0 #1e7e34;
+    cursor: pointer;
+    user-select: none;
+  }
+  .key-submit:active {
+    transform: translateY(2px);
+    box-shadow: 0 1px 0 #1e7e34;
+  }
+
+  /* 判定結果エリア */
+  #result-box {
+    margin-top: 20px;
+    padding: 24px 16px;
+    border-radius: 16px;
+    min-height: 180px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background-color: #eef2f5;
+  }
+  .ok {
+    background-color: #d4edda !important;
+    border: 4px solid #28a745;
+    color: #155724;
+  }
+  .ng {
+    background-color: #f8d7da !important;
+    border: 4px solid #dc3545;
+    color: #721c24;
+  }
+  .status-title {
+    font-size: 30px;
+    font-weight: bold;
+    margin-bottom: 8px;
+  }
+  .item-name {
+    font-size: 26px;
+    font-weight: bold;
+    margin: 6px 0;
+  }
+  .code-display-wrapper {
+    margin-top: 12px;
+    background: rgba(255, 255, 255, 0.92);
+    padding: 10px 16px;
+    border-radius: 12px;
+    border: 2px solid rgba(0, 0, 0, 0.12);
+    max-width: 100%;
+  }
+  .code-label {
+    font-size: 13px;
+    color: #555;
+    margin-bottom: 4px;
+    font-weight: bold;
+  }
+  .code-digits {
+    font-family: "Menlo", "Courier New", monospace;
+    font-size: 26px;
+    font-weight: bold;
+    letter-spacing: 2px;
+    color: #222;
+    word-break: break-all;
+  }
+  .check-digit-box {
+    display: inline-block;
+    padding: 0 6px;
+    margin-left: 3px;
+    border-radius: 6px;
+    border: 3px solid currentColor;
+  }
+  .ok .check-digit-box {
+    background-color: #c3e6cb;
+    color: #155724;
+    border-color: #28a745;
+  }
+  .ng .check-digit-box {
+    background-color: #f5c6cb;
+    color: #721c24;
+    border-color: #dc3545;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>🛒 バーコード読み取り体験</h1>
+  <p class="guide">カメラで読み取るか、テンキー・わくから数字を入力してください</p>
+  
+  <div class="controls">
+    <button id="camera-toggle-btn" class="btn" type="button">📷 カメラを起動</button>
+    <button id="switch-camera-btn" class="btn" type="button">🔄 カメラ切替</button>
+    <button id="keypad-toggle-btn" class="btn" type="button">🔢 テンキーをひらく</button>
+  </div>
+
+  <!-- カメラエリア -->
+  <div id="camera-box">
+    <div class="video-wrapper">
+      <video id="video" autoplay playsinline muted></video>
+      <div class="scan-guide-line"></div>
+    </div>
+    <div class="camera-hint">赤い線にバーコードが横向きに重なるようにかざしてください</div>
+  </div>
+
+  <!-- 入力わく -->
+  <div class="manual-input-area">
+    <input type="text" id="barcode-input" inputmode="numeric" placeholder="数字を入力してかくてい" autocomplete="off">
+    <div id="digit-counter"></div>
+  </div>
+
+  <!-- 仮想テンキーエリア -->
+  <div id="keypad-box">
+    <div class="keypad-grid">
+      <button type="button" class="key-btn" data-num="7">7</button>
+      <button type="button" class="key-btn" data-num="8">8</button>
+      <button type="button" class="key-btn" data-num="9">9</button>
+      <button type="button" class="key-btn" data-num="4">4</button>
+      <button type="button" class="key-btn" data-num="5">5</button>
+      <button type="button" class="key-btn" data-num="6">6</button>
+      <button type="button" class="key-btn" data-num="1">1</button>
+      <button type="button" class="key-btn" data-num="2">2</button>
+      <button type="button" class="key-btn" data-num="3">3</button>
+      <button type="button" class="key-btn key-clear" id="key-clear-btn">ぜんぶ消す</button>
+      <button type="button" class="key-btn" data-num="0">0</button>
+      <button type="button" class="key-btn key-back" id="key-back-btn">⌫ 1文字消す</button>
+      <button type="button" class="key-submit" id="key-submit-btn">⭕ しらべる（かくてい）</button>
+    </div>
+  </div>
+
+  <!-- 判定結果エリア -->
+  <div id="result-box">
+    <div class="status-title" style="color:#888;">待機中...</div>
+    <div style="font-size:16px; color:#888;">カメラを起動するか、テンキーで数字を入れてください</div>
+  </div>
+</div>
+
+<script>
+  const productDatabase = {
+    "4902777237022": "明治 たけのこの里",
+    "4902777237596": "明治 きのこの山",
+    "4901330504779": "カルビー ポテトチップス うすしお味 55g",
+    "4902370553024": "ニンテンドースイッチ2",
+    "9784091400017": "ドラえもん 第1かん",
+    "4903333253920": "ロッテ コアラのマーチ",
+    "4902888258076": "森永 チョコボール ピーナッツ",
+    "4902555170893": "不二家 カントリーマアム",
+    "4901005009158": "グリコ ポッキー",
+    "4901360360796": "ブルボン お菓子"
+  };
+
+  const input = document.getElementById("barcode-input");
+  const digitCounter = document.getElementById("digit-counter");
+  const resultBox = document.getElementById("result-box");
+  const cameraBtn = document.getElementById("camera-toggle-btn");
+  const switchBtn = document.getElementById("switch-camera-btn");
+  const cameraBox = document.getElementById("camera-box");
+  const keypadBtn = document.getElementById("keypad-toggle-btn");
+  const keypadBox = document.getElementById("keypad-box");
+  let audioCtx = null;
+
+  function unlockAudio() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+  }
+  document.addEventListener("touchstart", unlockAudio, { once: true });
+  document.addEventListener("click", unlockAudio, { once: true });
+
+  function playTapSound() {
+    unlockAudio();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.05);
+  }
+
+  function playOkSound() {
+    unlockAudio();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(1046.5, audioCtx.currentTime);
+    osc.frequency.setValueAtTime(1318.5, audioCtx.currentTime + 0.12);
+    gain.gain.setValueAtTime(0.35, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.4);
+  }
+
+  function playErrorSound() {
+    unlockAudio();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(140, audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.45, audioCtx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 0.6);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.6);
+  }
+
+  function updateCounter() {
+    const val = input.value.trim();
+    if (!val) {
+      digitCounter.textContent = "";
+      return;
+    }
+    const len = val.length;
+    if (len < 13) {
+      digitCounter.style.color = "#555";
+      digitCounter.textContent = `げんざい ${len}けた（あと ${13 - len}けた）`;
+    } else if (len === 13) {
+      digitCounter.style.color = "#28a745";
+      digitCounter.textContent = `げんざい 13けた（ちょうど13けたです！）`;
+    } else {
+      digitCounter.style.color = "#dc3545";
+      digitCounter.textContent = `げんざい ${len}けた（${len - 13}けた 多いです）`;
+    }
+  }
+
+  input.addEventListener("input", updateCounter);
+
+  function escapeHtml(str) {
+    return str.replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+  }
+
+  function formatCodeDisplay(code) {
+    const safeCode = escapeHtml(code);
+    if (/^\d{13}$/.test(code)) {
+      const first12 = safeCode.slice(0, 12);
+      const last1 = safeCode.slice(12, 13);
+      return `
+        <div class="code-display-wrapper">
+          <div class="code-label">読み取った番号（13けた ／ みぎはしがチェックディジット）</div>
+          <div class="code-digits">${first12}<span class="check-digit-box">${last1}</span></div>
+        </div>
+      `;
+    } else {
+      return `
+        <div class="code-display-wrapper">
+          <div class="code-label">読み取った入力（げんざい ${code.length}文字）</div>
+          <div class="code-digits">${safeCode}</div>
+        </div>
+      `;
+    }
+  }
+
+  function isValidJAN13(code) {
+    let sum = 0;
+    for (let i = 0; i < 12; i++) {
+      const digit = parseInt(code[i], 10);
+      sum += (i % 2 === 0) ? digit * 1 : digit * 3;
+    }
+    const calcCheckDigit = (10 - (sum % 10)) % 10;
+    const actualCheckDigit = parseInt(code[12], 10);
+    return calcCheckDigit === actualCheckDigit;
+  }
+
+  function evaluateBarcode(rawCode) {
+    const cleanCode = rawCode.replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0)).trim();
+    if (!cleanCode) return;
+
+    resultBox.classList.remove("ok", "ng");
+    const codeHtml = formatCodeDisplay(cleanCode);
+
+    if (!/^\d+$/.test(cleanCode)) {
+      playErrorSound();
+      resultBox.classList.add("ng");
+      resultBox.innerHTML = `
+        <div class="status-title">❌ エラー！バーコードではありません</div>
+        <div class="item-name">数字以外の文字が含まれています</div>
+        ${codeHtml}
+      `;
+      return;
+    }
+
+    if (cleanCode.length < 13) {
+      const shortCount = 13 - cleanCode.length;
+      playErrorSound();
+      resultBox.classList.add("ng");
+      resultBox.innerHTML = `
+        <div class="status-title">❌ エラー！けた数が足りません</div>
+        <div class="item-name">（あと ${shortCount}けた 足りません）</div>
+        ${codeHtml}
+      `;
+      return;
+    }
+
+    if (cleanCode.length > 13) {
+      const overCount = cleanCode.length - 13;
+      playErrorSound();
+      resultBox.classList.add("ng");
+      resultBox.innerHTML = `
+        <div class="status-title">❌ エラー！けた数が多すぎます</div>
+        <div class="item-name">（${overCount}けた 多いです）</div>
+        ${codeHtml}
+      `;
+      return;
+    }
+
+    if (isValidJAN13(cleanCode)) {
+      playOkSound();
+      resultBox.classList.add("ok");
+      const itemName = productDatabase[cleanCode] || "未登録の商品（正しいバーコードです）";
+      resultBox.innerHTML = `
+        <div class="status-title">⭕ 読み取り成功！</div>
+        <div class="item-name">${escapeHtml(itemName)}</div>
+        ${codeHtml}
+      `;
+    } else {
+      playErrorSound();
+      resultBox.classList.add("ng");
+      resultBox.innerHTML = `
+        <div class="status-title">❌ エラー！ニセモノのバーコードです</div>
+        <div class="item-name">最後の数字の計算が合いません</div>
+        ${codeHtml}
+      `;
+    }
+  }
+
+  function closeKeypad() {
+    keypadBox.style.display = "none";
+    keypadBtn.textContent = "🔢 テンキーをひらく";
+    keypadBtn.classList.remove("active");
+  }
+
+  function submitCurrentInput() {
+    evaluateBarcode(input.value);
+    input.value = "";
+    updateCounter();
+    input.blur();
+    closeKeypad();
+  }
+
+  input.addEventListener("keydown", function(e) {
+    if (e.key === "Enter") {
+      submitCurrentInput();
+    }
+  });
+
+  keypadBtn.addEventListener("click", () => {
+    unlockAudio();
+    const isHidden = keypadBox.style.display === "none" || keypadBox.style.display === "";
+    if (isHidden) {
+      keypadBox.style.display = "block";
+      keypadBtn.textContent = "✖ テンキーをとじる";
+      keypadBtn.classList.add("active");
+    } else {
+      closeKeypad();
+    }
+  });
+
+  document.querySelectorAll(".key-btn[data-num]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      playTapSound();
+      input.value += btn.getAttribute("data-num");
+      updateCounter();
+    });
+  });
+
+  document.getElementById("key-back-btn").addEventListener("click", () => {
+    playTapSound();
+    input.value = input.value.slice(0, -1);
+    updateCounter();
+  });
+
+  document.getElementById("key-clear-btn").addEventListener("click", () => {
+    playTapSound();
+    input.value = "";
+    updateCounter();
+  });
+
+  document.getElementById("key-submit-btn").addEventListener("click", () => {
+    submitCurrentInput();
+  });
+
+  // iPad Safari向けカメラ制御
+  let codeReader = null;
+  let isCameraRunning = false;
+  let useBackCamera = true;
+  let lastScannedCode = "";
+  let lastScannedTime = 0;
+
+  async function startCamera() {
+    if (typeof ZXing === "undefined") {
+      alert("バーコード解析プログラムの読み込み中です。数秒待ってからもう一度おしてください。");
+      return;
+    }
+    try {
+      if (codeReader) {
+        codeReader.reset();
+      }
+      const hints = new Map();
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.EAN_13]);
+      codeReader = new ZXing.BrowserMultiFormatReader(hints);
+
+      const constraints = {
+        video: {
+          facingMode: useBackCamera ? { ideal: "environment" } : { ideal: "user" }
+        }
+      };
+
+      cameraBox.style.display = "block";
+      switchBtn.style.display = "inline-block";
+      cameraBtn.textContent = "⏹ カメラを停止";
+      cameraBtn.classList.add("active");
+      isCameraRunning = true;
+
+      await codeReader.decodeFromConstraints(constraints, 'video', (result, err) => {
+        if (result) {
+          const text = result.getText();
+          const now = Date.now();
+          if (text !== lastScannedCode || (now - lastScannedTime) > 2500) {
+            lastScannedCode = text;
+            lastScannedTime = now;
+            input.value = text;
+            updateCounter();
+            evaluateBarcode(text);
+            setTimeout(() => {
+              input.value = "";
+              updateCounter();
+            }, 1000);
+          }
+        }
+      });
+    } catch (e) {
+      alert("カメラを起動できませんでした。\n【理由】" + e.name + ": " + e.message);
+      stopCamera();
+    }
+  }
+
+  function stopCamera() {
+    if (codeReader) {
+      codeReader.reset();
+    }
+    cameraBox.style.display = "none";
+    switchBtn.style.display = "none";
+    cameraBtn.textContent = "📷 カメラを起動";
+    cameraBtn.classList.remove("active");
+    isCameraRunning = false;
+  }
+
+  cameraBtn.addEventListener("click", () => {
+    unlockAudio();
+    if (!isCameraRunning) {
+      startCamera();
+    } else {
+      stopCamera();
+    }
+  });
+
+  switchBtn.addEventListener("click", () => {
+    unlockAudio();
+    useBackCamera = !useBackCamera;
+    if (isCameraRunning) {
+      startCamera();
+    }
+  });
+</script>
+
+</body>
+</html>

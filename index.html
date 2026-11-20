@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>バーコードチェック体験レジ</title>
-<script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
 <style>
   * {
     box-sizing: border-box;
@@ -95,10 +94,10 @@
   .scan-guide-line {
     position: absolute;
     top: 50%;
-    left: 10%;
-    right: 10%;
+    left: 6%;
+    right: 6%;
     height: 3px;
-    background-color: rgba(255, 59, 48, 0.8);
+    background-color: rgba(255, 59, 48, 0.85);
     box-shadow: 0 0 6px rgba(255, 59, 48, 0.9);
     pointer-events: none;
   }
@@ -348,6 +347,7 @@
   const cameraBox = document.getElementById("camera-box");
   const keypadBtn = document.getElementById("keypad-toggle-btn");
   const keypadBox = document.getElementById("keypad-box");
+  const videoEl = document.getElementById("video");
   let audioCtx = null;
 
   function unlockAudio() {
@@ -579,29 +579,217 @@
     submitCurrentInput();
   });
 
-  // iPad Safari向けカメラ制御（読み取り後に自動で閉じる）
-  let codeReader = null;
+  // ==========================================================
+  // チェックディジットが間違っているJAN-13でも読み取れる自前デコーダー
+  // ==========================================================
+  const L_CODES = [
+    [3,2,1,1], [2,2,2,1], [2,1,2,2], [1,4,1,1], [1,1,3,2],
+    [1,2,3,1], [1,1,1,4], [1,3,1,2], [1,2,1,3], [3,1,1,2]
+  ];
+  const G_CODES = [
+    [1,1,2,3], [1,2,2,2], [2,2,1,2], [1,1,4,1], [2,3,1,1],
+    [1,3,2,1], [4,1,1,1], [2,1,3,1], [3,1,2,1], [2,1,1,3]
+  ];
+  const R_CODES = [
+    [3,2,1,1], [2,2,2,1], [2,1,2,2], [1,4,1,1], [1,1,3,2],
+    [1,2,3,1], [1,1,1,4], [1,3,1,2], [1,2,1,3], [3,1,1,2]
+  ];
+  const FIRST_DIGIT_PATTERNS = {
+    "LLLLLL": 0, "LLGLGG": 1, "LLGGLG": 2, "LLGGGL": 3, "LGLLGG": 4,
+    "LGGLLG": 5, "LGGGLL": 6, "LGLGLG": 7, "LGLGGL": 8, "LGGLGL": 9
+  };
+
+  function matchDigit(widths, table) {
+    const total = widths[0] + widths[1] + widths[2] + widths[3];
+    if (total <= 0) return { digit: -1, error: 999 };
+    const norm = widths.map(w => (w / total) * 7);
+    let bestDigit = -1;
+    let minErr = 999;
+    for (let d = 0; d < 10; d++) {
+      let err = 0;
+      for (let i = 0; i < 4; i++) {
+        err += Math.abs(norm[i] - table[d][i]);
+      }
+      if (err < minErr) {
+        minErr = err;
+        bestDigit = d;
+      }
+    }
+    return minErr < 1.35 ? { digit: bestDigit, error: minErr } : { digit: -1, error: minErr };
+  }
+
+  function decodeRowEAN13(grayRow) {
+    const len = grayRow.length;
+    // 局所的な明暗のしきい値で白(0)・黒(1)を判定（照明のムラに強い）
+    const win = Math.max(20, Math.floor(len / 8));
+    const prefix = new Float64Array(len + 1);
+    for (let i = 0; i < len; i++) prefix[i + 1] = prefix[i] + grayRow[i];
+
+    const binary = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      const s = Math.max(0, i - win);
+      const e = Math.min(len, i + win);
+      const localAvg = (prefix[e] - prefix[s]) / (e - s);
+      binary[i] = grayRow[i] < localAvg * 0.92 ? 1 : 0;
+    }
+
+    // 連続する白・黒の幅（ランレングス）を抽出
+    const runs = [];
+    let curVal = binary[0];
+    let curLen = 1;
+    for (let i = 1; i < len; i++) {
+      if (binary[i] === curVal) {
+        curLen++;
+      } else {
+        runs.push({ color: curVal, width: curLen });
+        curVal = binary[i];
+        curLen = 1;
+      }
+    }
+    runs.push({ color: curVal, width: curLen });
+
+    // JAN-13は合計59本のバーとスペース（黒から始まる）で構成される
+    for (let start = 0; start <= runs.length - 59; start++) {
+      if (runs[start].color !== 1) continue;
+
+      // スタートガード(3) + 左6桁(24) + センターガード(5) + 右6桁(24) + エンドガード(3) = 59
+      const s0 = runs[start].width, s1 = runs[start + 1].width, s2 = runs[start + 2].width;
+      const startUnit = (s0 + s1 + s2) / 3;
+      if (startUnit < 1.2) continue;
+      if (Math.abs(s0 / startUnit - 1) > 0.5 || Math.abs(s1 / startUnit - 1) > 0.5 || Math.abs(s2 / startUnit - 1) > 0.5) continue;
+
+      // センターガード（インデックス start + 27 から5本）
+      const cIdx = start + 27;
+      const cUnit = (runs[cIdx].width + runs[cIdx + 1].width + runs[cIdx + 2].width + runs[cIdx + 3].width + runs[cIdx + 4].width) / 5;
+      if (Math.abs(cUnit - startUnit) / startUnit > 0.45) continue;
+
+      // エンドガード（インデックス start + 56 から3本）
+      const eIdx = start + 56;
+      const eUnit = (runs[eIdx].width + runs[eIdx + 1].width + runs[eIdx + 2].width) / 3;
+      if (Math.abs(eUnit - startUnit) / startUnit > 0.45) continue;
+
+      // 左側6桁（LまたはGパリティ）を解読
+      let parityStr = "";
+      let digits = "";
+      let ok = true;
+
+      for (let d = 0; d < 6; d++) {
+        const idx = start + 3 + d * 4;
+        const w = [runs[idx].width, runs[idx + 1].width, runs[idx + 2].width, runs[idx + 3].width];
+        const mL = matchDigit(w, L_CODES);
+        const mG = matchDigit(w, G_CODES);
+        if (mL.digit === -1 && mG.digit === -1) {
+          ok = false;
+          break;
+        }
+        if (mL.error <= mG.error) {
+          parityStr += "L";
+          digits += mL.digit;
+        } else {
+          parityStr += "G";
+          digits += mG.digit;
+        }
+      }
+      if (!ok) continue;
+
+      const firstDigit = FIRST_DIGIT_PATTERNS[parityStr];
+      if (firstDigit === undefined) continue;
+
+      // 右側6桁（Rパリティ：チェックディジット含む）を解読
+      for (let d = 0; d < 6; d++) {
+        const idx = start + 32 + d * 4;
+        const w = [runs[idx].width, runs[idx + 1].width, runs[idx + 2].width, runs[idx + 3].width];
+        const mR = matchDigit(w, R_CODES);
+        if (mR.digit === -1) {
+          ok = false;
+          break;
+        }
+        digits += mR.digit;
+      }
+      if (!ok) continue;
+
+      return String(firstDigit) + digits;
+    }
+    return null;
+  }
+
+  // カメラ制御（誤認識防止のため2フレーム連続で同じ13けたが読めたら確定）
+  let mediaStream = null;
   let isCameraRunning = false;
   let useBackCamera = true;
+  let scanCanvas = document.createElement("canvas");
+  let scanCtx = scanCanvas.getContext("2d", { willReadFrequently: true });
+  let candidateCode = "";
+  let candidateCount = 0;
+
+  function scanLoop() {
+    if (!isCameraRunning) return;
+
+    if (videoEl.readyState >= 2 && videoEl.videoWidth > 0) {
+      const vw = videoEl.videoWidth;
+      const vh = videoEl.videoHeight;
+      scanCanvas.width = vw;
+      scanCanvas.height = vh;
+      scanCtx.drawImage(videoEl, 0, 0, vw, vh);
+
+      // 赤いガイド線付近の複数ラインをスキャン
+      const offsets = [-12, -6, 0, 6, 12];
+      const startX = Math.floor(vw * 0.05);
+      const scanW = Math.floor(vw * 0.90);
+
+      for (const dy of offsets) {
+        const y = Math.min(vh - 1, Math.max(0, Math.floor(vh * 0.5) + dy));
+        const imgData = scanCtx.getImageData(startX, y, scanW, 1).data;
+        const gray = new Float32Array(scanW);
+        for (let x = 0; x < scanW; x++) {
+          const idx = x * 4;
+          gray[x] = imgData[idx] * 0.299 + imgData[idx + 1] * 0.587 + imgData[idx + 2] * 0.114;
+        }
+
+        const decoded = decodeRowEAN13(gray);
+        if (decoded && /^\d{13}$/.test(decoded)) {
+          if (decoded === candidateCode) {
+            candidateCount++;
+          } else {
+            candidateCode = decoded;
+            candidateCount = 1;
+          }
+
+          if (candidateCount >= 2) {
+            stopCamera();
+            evaluateBarcode(decoded);
+            input.value = "";
+            updateCounter();
+            return;
+          }
+          break;
+        }
+      }
+    }
+
+    if (isCameraRunning) {
+      requestAnimationFrame(scanLoop);
+    }
+  }
 
   async function startCamera() {
-    if (typeof ZXing === "undefined") {
-      alert("バーコード解析プログラムの読み込み中です。数秒待ってからもう一度おしてください。");
-      return;
-    }
     try {
-      if (codeReader) {
-        codeReader.reset();
-      }
-      const hints = new Map();
-      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.EAN_13]);
-      codeReader = new ZXing.BrowserMultiFormatReader(hints);
+      stopCameraStreamOnly();
+      candidateCode = "";
+      candidateCount = 0;
 
       const constraints = {
+        audio: false,
         video: {
-          facingMode: useBackCamera ? { ideal: "environment" } : { ideal: "user" }
+          facingMode: useBackCamera ? { ideal: "environment" } : { ideal: "user" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
         }
       };
+
+      mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+      videoEl.srcObject = mediaStream;
+      await videoEl.play();
 
       cameraBox.style.display = "block";
       switchBtn.style.display = "inline-block";
@@ -609,26 +797,24 @@
       cameraBtn.classList.add("active");
       isCameraRunning = true;
 
-      await codeReader.decodeFromConstraints(constraints, 'video', (result, err) => {
-        if (result && isCameraRunning) {
-          const text = result.getText();
-          stopCamera();
-          evaluateBarcode(text);
-          input.value = "";
-          updateCounter();
-        }
-      });
+      requestAnimationFrame(scanLoop);
     } catch (e) {
       alert("カメラを起動できませんでした。\n【理由】" + e.name + ": " + e.message);
       stopCamera();
     }
   }
 
+  function stopCameraStreamOnly() {
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(track => track.stop());
+      mediaStream = null;
+    }
+    videoEl.srcObject = null;
+  }
+
   function stopCamera() {
     isCameraRunning = false;
-    if (codeReader) {
-      codeReader.reset();
-    }
+    stopCameraStreamOnly();
     cameraBox.style.display = "none";
     switchBtn.style.display = "none";
     cameraBtn.textContent = "📷 カメラを起動";
@@ -655,3 +841,5 @@
 
 </body>
 </html>
+
+

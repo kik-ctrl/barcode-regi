@@ -20,7 +20,7 @@
     max-width: 760px;
     margin: 0 auto;
     background: white;
-    padding: 24px;
+    padding: 24px 24px 18px 24px;
     border-radius: 20px;
     box-shadow: 0 6px 18px rgba(0,0,0,0.08);
   }
@@ -270,6 +270,14 @@
     color: #721c24;
     border-color: #dc3545;
   }
+
+  /* フッター表記 */
+  .footer-credit {
+    margin-top: 16px;
+    font-size: 12px;
+    color: #888;
+    letter-spacing: 0.5px;
+  }
 </style>
 </head>
 <body>
@@ -323,6 +331,8 @@
     <div class="status-title" style="color:#888;">待機中...</div>
     <div style="font-size:16px; color:#888;">カメラを起動するか、テンキーで数字を入れてください</div>
   </div>
+
+  <footer class="footer-credit">藤岡算学塾2026；バーコードの最後の数字をあてよう</footer>
 </div>
 
 <script>
@@ -627,7 +637,6 @@
 
   function decodeRowEAN13(grayRow) {
     const len = grayRow.length;
-    // 局所的な明暗のしきい値で白(0)・黒(1)を判定（照明のムラに強い）
     const win = Math.max(20, Math.floor(len / 8));
     const prefix = new Float64Array(len + 1);
     for (let i = 0; i < len; i++) prefix[i + 1] = prefix[i] + grayRow[i];
@@ -640,7 +649,6 @@
       binary[i] = grayRow[i] < localAvg * 0.92 ? 1 : 0;
     }
 
-    // 連続する白・黒の幅（ランレングス）を抽出
     const runs = [];
     let curVal = binary[0];
     let curLen = 1;
@@ -655,27 +663,22 @@
     }
     runs.push({ color: curVal, width: curLen });
 
-    // JAN-13は合計59本のバーとスペース（黒から始まる）で構成される
     for (let start = 0; start <= runs.length - 59; start++) {
       if (runs[start].color !== 1) continue;
 
-      // スタートガード(3) + 左6桁(24) + センターガード(5) + 右6桁(24) + エンドガード(3) = 59
       const s0 = runs[start].width, s1 = runs[start + 1].width, s2 = runs[start + 2].width;
       const startUnit = (s0 + s1 + s2) / 3;
       if (startUnit < 1.2) continue;
       if (Math.abs(s0 / startUnit - 1) > 0.5 || Math.abs(s1 / startUnit - 1) > 0.5 || Math.abs(s2 / startUnit - 1) > 0.5) continue;
 
-      // センターガード（インデックス start + 27 から5本）
       const cIdx = start + 27;
       const cUnit = (runs[cIdx].width + runs[cIdx + 1].width + runs[cIdx + 2].width + runs[cIdx + 3].width + runs[cIdx + 4].width) / 5;
       if (Math.abs(cUnit - startUnit) / startUnit > 0.45) continue;
 
-      // エンドガード（インデックス start + 56 から3本）
       const eIdx = start + 56;
       const eUnit = (runs[eIdx].width + runs[eIdx + 1].width + runs[eIdx + 2].width) / 3;
       if (Math.abs(eUnit - startUnit) / startUnit > 0.45) continue;
 
-      // 左側6桁（LまたはGパリティ）を解読
       let parityStr = "";
       let digits = "";
       let ok = true;
@@ -702,7 +705,6 @@
       const firstDigit = FIRST_DIGIT_PATTERNS[parityStr];
       if (firstDigit === undefined) continue;
 
-      // 右側6桁（Rパリティ：チェックディジット含む）を解読
       for (let d = 0; d < 6; d++) {
         const idx = start + 32 + d * 4;
         const w = [runs[idx].width, runs[idx + 1].width, runs[idx + 2].width, runs[idx + 3].width];
@@ -720,7 +722,6 @@
     return null;
   }
 
-  // カメラ制御（誤認識防止のため2フレーム連続で同じ13けたが読めたら確定）
   let mediaStream = null;
   let isCameraRunning = false;
   let useBackCamera = true;
@@ -739,7 +740,6 @@
       scanCanvas.height = vh;
       scanCtx.drawImage(videoEl, 0, 0, vw, vh);
 
-      // 赤いガイド線付近の複数ラインをスキャン
       const offsets = [-12, -6, 0, 6, 12];
       const startX = Math.floor(vw * 0.05);
       const scanW = Math.floor(vw * 0.90);
@@ -848,5 +848,3 @@
 
 </body>
 </html>
-
-
